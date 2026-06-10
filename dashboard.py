@@ -271,6 +271,29 @@ def scan_sessions(max_age_hours):
             "pr_url": meta["pr_url"],
             "pr_number": meta["pr_number"],
         })
+    # Live sessions that haven't written a transcript yet (e.g. fresh
+    # remote-control workers) only exist in the registry.
+    seen = {s["session_id"] for s in sessions}
+    for sid, reg in registry.items():
+        if sid in seen:
+            continue
+        bridge = reg.get("bridgeSessionId")
+        sessions.append({
+            "session_id": sid,
+            "project": reg.get("cwd"),
+            "is_subagent": False,
+            "status": {"busy": "working", "waiting": "needs-input"}.get(
+                reg.get("status"), "idle"),
+            "attached": True,
+            "kind": reg.get("kind"),
+            "waiting_for": reg.get("waitingFor"),
+            "remote_url": f"https://claude.ai/code/{bridge}" if bridge else None,
+            "age_seconds": max(0, int(time.time() - reg.get("updatedAt", 0) / 1000)),
+            "title": reg.get("name") if reg.get("name") != sid[:8] else None,
+            "last_prompt": None, "away_summary": None,
+            "git_branch": None, "permission_mode": None,
+            "pr_url": None, "pr_number": None,
+        })
     sessions.sort(key=lambda s: s["age_seconds"])
     return sessions
 

@@ -245,7 +245,11 @@ async function refreshChat() {
   try {
     data = await (await fetch(`/api/messages${qs({session_id: selected})}`)).json();
   } catch { return; }
-  if (!data.events) return;
+  if (!data.events) {
+    if (renderedSid !== selected)
+      $("chatInner").innerHTML = '<div id="placeholder">No transcript yet — this session hasn’t produced output on this machine.</div>';
+    return;
+  }
   const chat = $("chat"), inner = $("chatInner");
   const stick = chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 60;
   if (renderedSid !== selected || data.events.length < renderedCount) {
