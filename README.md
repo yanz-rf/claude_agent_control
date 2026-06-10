@@ -33,6 +33,20 @@ python3 dashboard.py --token SECRET           # require ?token=SECRET on every r
 python3 dashboard.py --port 9000 --host 127.0.0.1
 ```
 
+## Multi-machine view (federation)
+
+Run a dashboard on every machine (e.g. over Tailscale), then point one at
+the others:
+
+```bash
+python3 dashboard.py --peer http://100.x.y.z:8585 --peer http://100.a.b.c:8585?token=S
+```
+
+Peer sessions appear in the same UI tagged with a 🖥 host label; their
+conversations and replies are proxied to the owning machine. Only the
+machines need to be mutually reachable (one HTTP port — no SSH); a phone
+on the tailnet can open any instance.
+
 Stdlib only, no dependencies. The session list polls every 3 s and the open
 conversation every 2.5 s; the server reads transcripts incrementally (only
 bytes appended since the last poll) and serves the last 500 events per
