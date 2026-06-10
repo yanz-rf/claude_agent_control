@@ -268,6 +268,16 @@ def proxy_reply(label, payload):
         return 502, {"error": f"peer {label} unreachable"}
 
 
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def live_registry():
     """sessionId -> ~/.claude/sessions/<pid>.json entry, live processes only."""
     reg = {}
@@ -278,7 +288,7 @@ def live_registry():
         except (OSError, json.JSONDecodeError):
             continue
         pid, sid = d.get("pid"), d.get("sessionId")
-        if pid and sid and os.path.exists(f"/proc/{pid}"):
+        if pid and sid and _pid_alive(pid):
             reg[sid] = d
     return reg
 
