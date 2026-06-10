@@ -9,12 +9,15 @@ import collections
 import json
 import os
 import re
+import socket
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from glob import glob
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse
 
 PROJECTS_DIR = Path.home() / ".claude" / "projects"
 SESSIONS_DIR = Path.home() / ".claude" / "sessions"
@@ -205,6 +208,66 @@ def _read_session(path):
     return entry["meta"], st.st_mtime
 
 
+HOST_NAME = socket.gethostname().split(".")[0]
+PEERS = {}  # label (netloc) -> base url, may carry ?token=...
+
+
+def _peer_url(base, path, params):
+    u = urlparse(base)
+    q = dict(parse_qsl(u.query))
+    q.update(params)
+    return f"{u.scheme}://{u.netloc}{path}?{urlencode(q)}"
+
+
+def peer_sessions(hours):
+    """Fetch and tag session lists from federated peers (best effort)."""
+    merged = []
+    for label, base in PEERS.items():
+        try:
+            url = _peer_url(base, "/api/sessions", {"hours": hours, "local": "1"})
+            with urllib.request.urlopen(url, timeout=3) as r:
+                remote = json.loads(r.read())
+        except (OSError, json.JSONDecodeError, urllib.error.URLError):
+            continue
+        for s in remote:
+            s["host"] = s.get("host") or label
+            s["peer"] = label
+            merged.append(s)
+    return merged
+
+
+def proxy_messages(label, session_id):
+    """Forward a chat-view request to the peer that owns the session."""
+    base = PEERS.get(label)
+    if base is None:
+        return 404, {"error": "unknown peer"}
+    try:
+        url = _peer_url(base, "/api/messages", {"session_id": session_id})
+        with urllib.request.urlopen(url, timeout=5) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read() or b"{}")
+    except (OSError, json.JSONDecodeError, urllib.error.URLError):
+        return 502, {"error": f"peer {label} unreachable"}
+
+
+def proxy_reply(label, payload):
+    base = PEERS.get(label)
+    if base is None:
+        return 404, {"error": "unknown peer"}
+    try:
+        req = urllib.request.Request(
+            _peer_url(base, "/api/reply", {}), method="POST",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read() or b"{}")
+    except (OSError, json.JSONDecodeError, urllib.error.URLError):
+        return 502, {"error": f"peer {label} unreachable"}
+
+
 def live_registry():
     """sessionId -> ~/.claude/sessions/<pid>.json entry, live processes only."""
     reg = {}
@@ -323,11 +386,23 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/":
             self._send(200, "text/html; charset=utf-8", HTML_PATH.read_bytes())
         elif url.path == "/api/sessions":
-            hours = float(parse_qs(url.query).get("hours", ["48"])[0])
-            body = json.dumps(scan_sessions(hours)).encode()
-            self._send(200, "application/json", body)
+            q = parse_qs(url.query)
+            hours = float(q.get("hours", ["48"])[0])
+            sessions = scan_sessions(hours)
+            for s in sessions:
+                s["host"], s["peer"] = HOST_NAME, None
+            # "local=1" marks a peer-to-peer fetch; don't fan out again.
+            if "local" not in q:
+                sessions += peer_sessions(hours)
+                sessions.sort(key=lambda s: s["age_seconds"])
+            self._send(200, "application/json", json.dumps(sessions).encode())
         elif url.path == "/api/messages":
-            sid = parse_qs(url.query).get("session_id", [""])[0]
+            q = parse_qs(url.query)
+            sid = q.get("session_id", [""])[0]
+            peer = q.get("peer", [None])[0]
+            if peer:
+                code, data = proxy_messages(peer, sid)
+                return self._send(code, "application/json", json.dumps(data).encode())
             events = read_messages(sid)
             if events is None:
                 return self._send(404, "application/json", b'{"error": "unknown session"}')
@@ -350,6 +425,11 @@ class Handler(BaseHTTPRequestHandler):
             assert text and mode in PERMISSION_MODES
         except (json.JSONDecodeError, KeyError, AssertionError, ValueError):
             return self._send(400, "application/json", b'{"error": "bad request"}')
+        peer = req.get("peer")
+        if peer:
+            code, data = proxy_reply(peer, {"session_id": session_id, "text": text,
+                                            "permission_mode": mode})
+            return self._send(code, "application/json", json.dumps(data).encode())
         # Make sure the session cache is warm so send_reply can find it.
         scan_sessions(24 * 365)
         err = send_reply(session_id, text, mode)
@@ -358,12 +438,21 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    global HOST_NAME
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--port", type=int, default=8585)
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--token", help="require ?token=... on every request "
                     "(recommended when binding beyond localhost)")
+    ap.add_argument("--peer", action="append", default=[], metavar="URL",
+                    help="federate another dashboard, e.g. "
+                    "http://100.x.y.z:8585 (repeatable; may carry ?token=...)")
+    ap.add_argument("--name", default=HOST_NAME,
+                    help="host label shown in the UI (default: hostname)")
     args = ap.parse_args()
+    HOST_NAME = args.name
+    for p in args.peer:
+        PEERS[urlparse(p).netloc] = p
     Handler.token = args.token
     suffix = f"?token={args.token}" if args.token else ""
     print(f"Claude agent dashboard on http://{args.host}:{args.port}/{suffix}")

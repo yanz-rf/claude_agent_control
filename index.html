@@ -211,7 +211,7 @@ async function refreshList() {
         ${s.remote_url ? '<span class="chip remote">🌐 remote</span>'
           : s.attached ? '<span class="chip local">local</span>' : ""}
         <span style="color:var(--dim);font-size:.68rem">${fmtAge(s.age_seconds)}</span></div>
-      <div class="s">${esc((s.project || "").split("/").slice(-1)[0])}${s.is_subagent ? " · subagent" : ""}${s.git_branch ? " · ⎇ " + esc(s.git_branch) : ""}</div>
+      <div class="s">${s.peer ? "🖥 " + esc(s.host) + " · " : ""}${esc((s.project || "").split("/").slice(-1)[0])}${s.is_subagent ? " · subagent" : ""}${s.git_branch ? " · ⎇ " + esc(s.git_branch) : ""}</div>
     </div>`).join("");
   if (selected) updateHeader();
 }
@@ -226,6 +226,7 @@ function updateHeader() {
         ? ` <a class="chip remote" href="${esc(s.remote_url)}" target="_blank">🌐 open in claude.ai/code</a>`
         : s.attached ? ` <span class="chip local">local ${esc(s.kind || "")}</span>` : "");
   $("hdrMeta").innerHTML =
+    `🖥 ${esc(s.host || "local")} · ` +
     (s.git_branch ? `⎇ ${esc(s.git_branch)} · ` : "") +
     (s.pr_url ? `<a href="${esc(s.pr_url)}" target="_blank">PR #${esc(s.pr_number)}</a> · ` : "") +
     esc(s.project || "");
@@ -241,9 +242,11 @@ function updateHeader() {
 /* ── chat ── */
 async function refreshChat() {
   if (!selected) return;
+  const sel = sessions.find(x => x.session_id === selected);
   let data;
   try {
-    data = await (await fetch(`/api/messages${qs({session_id: selected})}`)).json();
+    data = await (await fetch(`/api/messages${qs({session_id: selected,
+        ...(sel?.peer && {peer: sel.peer})})}`)).json();
   } catch { return; }
   if (!data.events) {
     if (renderedSid !== selected)
@@ -289,7 +292,9 @@ async function send() {
   try {
     const res = await fetch(`/api/reply${qs({})}`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: selected, text, permission_mode: $("mode").value }),
+      body: JSON.stringify({ session_id: selected, text, permission_mode: $("mode").value,
+                             ...(sessions.find(x => x.session_id === selected)?.peer
+                                 && {peer: sessions.find(x => x.session_id === selected).peer}) }),
     });
     const out = await res.json();
     if (res.ok) {
