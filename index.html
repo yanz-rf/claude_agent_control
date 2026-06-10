@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Agents</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #262624; --bg-side: #1f1e1d; --bg-card: #30302e; --bg-input: #393937;
+    --border: #3e3e3a; --text: #e8e6e3; --dim: #a8a49c; --accent: #d97757;
+    --green: #5fe39a; --orange: #ffb454; --red: #ff7a7a;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0;
+         background: var(--bg); color: var(--text); height: 100dvh;
+         display: flex; overflow: hidden; }
+
+  /* ── sidebar ── */
+  #side { width: 320px; min-width: 320px; background: var(--bg-side);
+          border-right: 1px solid var(--border); display: flex;
+          flex-direction: column; }
+  #side header { padding: .9rem 1rem .5rem; display: flex; align-items: center;
+                 gap: .5rem; }
+  #side header h1 { font-size: .95rem; margin: 0; flex: 1; }
+  #side header select { background: var(--bg-input); color: inherit;
+          border: 1px solid var(--border); border-radius: 6px;
+          padding: .15rem .3rem; font-size: .72rem; }
+  #counts { padding: 0 1rem .5rem; font-size: .72rem; color: var(--dim); }
+  #list { overflow-y: auto; flex: 1; padding: 0 .5rem .5rem; }
+  .item { padding: .55rem .6rem; border-radius: 8px; cursor: pointer;
+          margin-bottom: 2px; }
+  .item:hover { background: #2a2a28; }
+  .item.sel { background: var(--bg-card); }
+  .item .t { font-size: .82rem; display: flex; gap: .45rem; align-items: center; }
+  .item .t span.name { flex: 1; overflow: hidden; text-overflow: ellipsis;
+                       white-space: nowrap; }
+  .item .s { font-size: .7rem; color: var(--dim); margin-top: .15rem;
+             padding-left: 1.05rem; overflow: hidden; text-overflow: ellipsis;
+             white-space: nowrap; }
+  .chip { font-size: .62rem; padding: .05rem .35rem; border-radius: 4px;
+          white-space: nowrap; flex-shrink: 0; }
+  .chip.remote { color: #7aa2f7; border: 1px solid #7aa2f755; }
+  .chip.local  { color: var(--dim); border: 1px solid #57534e88; }
+  a.chip.remote { text-decoration: none; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .dot.working { background: var(--green); animation: pulse 1.2s infinite; }
+  .dot.needs-input { background: var(--orange); }
+  .dot.idle { background: #57534e; }
+  @keyframes pulse { 50% { opacity: .3; } }
+
+  /* ── main ── */
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #hdr { padding: .7rem 1.2rem; border-bottom: 1px solid var(--border);
+         display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+  #back { display: none; background: none; border: none; color: var(--dim);
+          font-size: 1.1rem; cursor: pointer; padding: 0 .3rem; }
+  #hdr .title { font-weight: 600; font-size: .95rem; }
+  .badge { font-size: .68rem; padding: .12rem .55rem; border-radius: 999px;
+           font-weight: 600; white-space: nowrap; }
+  .badge.working { background: #103d22; color: var(--green); }
+  .badge.needs-input { background: #4a2d07; color: var(--orange); }
+  .badge.idle { background: #3a3a38; color: var(--dim); }
+  #hdr .meta { font-size: .72rem; color: var(--dim); }
+  #hdr .meta a { color: #7aa2f7; text-decoration: none; }
+  #chat { flex: 1; overflow-y: auto; padding: 1.2rem; }
+  #chat .inner { max-width: 760px; margin: 0 auto; }
+  #placeholder { color: var(--dim); text-align: center; margin-top: 30vh;
+                 font-size: .9rem; }
+
+  .msg { margin-bottom: 1rem; font-size: .88rem; line-height: 1.55;
+         overflow-wrap: break-word; }
+  .msg.user { background: var(--bg-card); border-radius: 12px;
+              padding: .7rem .95rem; margin-left: 15%; white-space: pre-wrap; }
+  .msg.assistant {}
+  .msg pre { background: #1b1b19; border: 1px solid var(--border);
+             border-radius: 8px; padding: .6rem .8rem; overflow-x: auto;
+             font-size: .78rem; line-height: 1.45; }
+  .msg code { background: #1b1b19; border-radius: 4px; padding: .05rem .3rem;
+              font-size: .8em; }
+  details.tool { margin: .35rem 0; font-size: .78rem; }
+  details.tool summary { cursor: pointer; color: var(--dim); list-style: none;
+        display: flex; gap: .45rem; align-items: center; user-select: none; }
+  details.tool summary::before { content: "▸"; transition: transform .1s; }
+  details.tool[open] summary::before { transform: rotate(90deg); }
+  details.tool summary .tn { color: #b8b4ac; font-weight: 600; }
+  details.tool summary .tp { overflow: hidden; text-overflow: ellipsis;
+        white-space: nowrap; max-width: 60%; opacity: .7; }
+  details.tool pre { margin: .35rem 0 0 1.1rem; white-space: pre-wrap; }
+  details.tool.err summary .tn { color: var(--red); }
+  details.tool.think summary .tn { font-style: italic; font-weight: 400; }
+
+  /* ── composer ── */
+  #composer { border-top: 1px solid var(--border); padding: .8rem 1.2rem 1rem; }
+  #composer .inner { max-width: 760px; margin: 0 auto; background: var(--bg-input);
+        border: 1px solid var(--border); border-radius: 14px; padding: .6rem .7rem; }
+  #composer textarea { width: 100%; background: none; border: none; resize: none;
+        color: inherit; font: inherit; font-size: .88rem; outline: none;
+        max-height: 160px; }
+  #composer .row { display: flex; align-items: center; gap: .5rem; margin-top: .3rem; }
+  #composer select { background: var(--bg-card); color: var(--dim); border: 1px
+        solid var(--border); border-radius: 6px; font-size: .72rem; padding: .2rem .35rem; }
+  #note { font-size: .72rem; flex: 1; color: var(--dim); }
+  #note.ok { color: var(--green); } #note.err { color: var(--red); }
+  #sendBtn { margin-left: auto; background: var(--accent); border: none;
+        color: #fff; border-radius: 8px; padding: .35rem .9rem; font-size: .8rem;
+        font-weight: 600; cursor: pointer; }
+  #sendBtn:disabled { opacity: .4; cursor: default; }
+
+  @media (max-width: 760px) {
+    #side { width: 100%; min-width: 0; }
+    body.chat-open #side { display: none; }
+    #main { display: none; }
+    body.chat-open #main { display: flex; }
+    #back { display: block; }
+    .msg.user { margin-left: 8%; }
+  }
+</style>
+</head>
+<body>
+<div id="side">
+  <header>
+    <h1>Claude Agents</h1>
+    <select id="hours">
+      <option value="6">6 h</option>
+      <option value="48" selected>48 h</option>
+      <option value="168">7 d</option>
+    </select>
+  </header>
+  <div id="counts"></div>
+  <div id="list"></div>
+</div>
+<div id="main">
+  <div id="hdr">
+    <button id="back" title="Back to sessions">←</button>
+    <span class="title" id="hdrTitle">Select a session</span>
+    <span id="hdrBadge"></span>
+    <span class="meta" id="hdrMeta"></span>
+  </div>
+  <div id="chat"><div class="inner" id="chatInner">
+    <div id="placeholder">Pick a session on the left to view and continue it.</div>
+  </div></div>
+  <div id="composer">
+    <div class="inner">
+      <textarea id="input" rows="1" placeholder="Reply to this session…"></textarea>
+      <div class="row">
+        <select id="mode">
+          <option>default</option><option>acceptEdits</option>
+          <option>bypassPermissions</option><option>plan</option>
+        </select>
+        <span id="note"></span>
+        <button id="sendBtn">Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const TOKEN = new URLSearchParams(location.search).get("token");
+const qs = extra => "?" + new URLSearchParams({...(TOKEN && {token: TOKEN}), ...extra});
+const $ = id => document.getElementById(id);
+const esc = t => { const d = document.createElement("div"); d.textContent = t ?? ""; return d.innerHTML; };
+const fmtAge = s => s < 60 ? `${s}s` : s < 3600 ? `${(s/60)|0}m` : s < 86400 ? `${(s/3600)|0}h` : `${(s/86400)|0}d`;
+const LABEL = { "working": "working", "needs-input": "needs input", "idle": "idle" };
+
+let sessions = [];
+let selected = null;          // session id
+let renderedCount = 0;        // chat events already in the DOM
+let renderedSid = null;
+
+/* minimal markdown: fenced code, inline code, bold */
+function md(text) {
+  const parts = text.split(/```(?:\w*\n)?/);
+  return parts.map((p, i) => i % 2
+    ? `<pre>${esc(p.replace(/\n$/, ""))}</pre>`
+    : esc(p).replace(/`([^`\n]+)`/g, "<code>$1</code>")
+            .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+            .replace(/\n/g, "<br>")
+  ).join("");
+}
+
+function eventHtml(e) {
+  if (e.kind === "user")      return `<div class="msg user">${esc(e.text)}</div>`;
+  if (e.kind === "assistant") return `<div class="msg assistant">${md(e.text)}</div>`;
+  if (e.kind === "tool_use")  return `<details class="tool"><summary>
+      <span class="tn">${esc(e.name)}</span><span class="tp">${esc(e.text)}</span>
+      </summary><pre>${esc(e.text)}</pre></details>`;
+  if (e.kind === "tool_result") return `<details class="tool${e.is_error ? " err" : ""}"><summary>
+      <span class="tn">${e.is_error ? "error" : "result"}</span>
+      <span class="tp">${esc((e.text || "").slice(0, 120))}</span>
+      </summary><pre>${esc(e.text)}</pre></details>`;
+  if (e.kind === "thinking")  return `<details class="tool think"><summary>
+      <span class="tn">thinking…</span></summary><pre>${esc(e.text)}</pre></details>`;
+  return "";
+}
+
+/* ── sidebar ── */
+async function refreshList() {
+  try {
+    sessions = await (await fetch(`/api/sessions${qs({hours: $("hours").value})}`)).json();
+  } catch { return; }
+  if (!Array.isArray(sessions)) return;
+  const needing = sessions.filter(s => s.status === "needs-input").length;
+  const working = sessions.filter(s => s.status === "working").length;
+  $("counts").textContent = `${working} working · ${needing} need input · ${sessions.length} total`;
+  document.title = (needing ? `(${needing}) ` : "") + "Claude Agents";
+  $("list").innerHTML = sessions.map(s => `
+    <div class="item${s.session_id === selected ? " sel" : ""}" data-sid="${s.session_id}">
+      <div class="t"><span class="dot ${s.status}"></span>
+        <span class="name">${esc(s.title || s.last_prompt || s.session_id.slice(0, 8))}</span>
+        ${s.remote_url ? '<span class="chip remote">🌐 remote</span>'
+          : s.attached ? '<span class="chip local">local</span>' : ""}
+        <span style="color:var(--dim);font-size:.68rem">${fmtAge(s.age_seconds)}</span></div>
+      <div class="s">${esc((s.project || "").split("/").slice(-1)[0])}${s.is_subagent ? " · subagent" : ""}${s.git_branch ? " · ⎇ " + esc(s.git_branch) : ""}</div>
+    </div>`).join("");
+  if (selected) updateHeader();
+}
+
+function updateHeader() {
+  const s = sessions.find(x => x.session_id === selected);
+  if (!s) return;
+  $("hdrTitle").textContent = s.title || s.session_id.slice(0, 8);
+  const statusText = LABEL[s.status] + (s.waiting_for ? ` · ${s.waiting_for}` : "");
+  $("hdrBadge").innerHTML = `<span class="badge ${s.status}">${esc(statusText)}</span>`
+    + (s.remote_url
+        ? ` <a class="chip remote" href="${esc(s.remote_url)}" target="_blank">🌐 open in claude.ai/code</a>`
+        : s.attached ? ` <span class="chip local">local ${esc(s.kind || "")}</span>` : "");
+  $("hdrMeta").innerHTML =
+    (s.git_branch ? `⎇ ${esc(s.git_branch)} · ` : "") +
+    (s.pr_url ? `<a href="${esc(s.pr_url)}" target="_blank">PR #${esc(s.pr_number)}</a> · ` : "") +
+    esc(s.project || "");
+  $("sendBtn").disabled = s.attached || s.status === "working";
+  $("input").placeholder =
+      s.attached ? (s.remote_url
+          ? "Attached to a live process — reply via its claude.ai/code link above"
+          : "Open in a local terminal — reply there")
+    : s.status === "working" ? "Session is working — wait for it to finish…"
+    : "Reply to this session…";
+}
+
+/* ── chat ── */
+async function refreshChat() {
+  if (!selected) return;
+  let data;
+  try {
+    data = await (await fetch(`/api/messages${qs({session_id: selected})}`)).json();
+  } catch { return; }
+  if (!data.events) return;
+  const chat = $("chat"), inner = $("chatInner");
+  const stick = chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 60;
+  if (renderedSid !== selected || data.events.length < renderedCount) {
+    inner.innerHTML = data.events.map(eventHtml).join("");
+    renderedSid = selected;
+    chat.scrollTop = chat.scrollHeight;
+  } else if (data.events.length > renderedCount) {
+    inner.insertAdjacentHTML("beforeend",
+        data.events.slice(renderedCount).map(eventHtml).join(""));
+    if (stick) chat.scrollTop = chat.scrollHeight;
+  }
+  renderedCount = data.events.length;
+}
+
+function select(sid) {
+  selected = sid;
+  location.hash = sid;
+  renderedCount = 0; renderedSid = null;
+  $("note").textContent = ""; $("note").className = "";
+  $("chatInner").innerHTML = "";
+  document.body.classList.add("chat-open");
+  refreshList(); refreshChat();
+}
+
+$("list").addEventListener("click", e => {
+  const item = e.target.closest(".item");
+  if (item) select(item.dataset.sid);
+});
+$("back").addEventListener("click", () => document.body.classList.remove("chat-open"));
+$("hours").addEventListener("change", refreshList);
+
+/* ── composer ── */
+async function send() {
+  const text = $("input").value.trim();
+  if (!text || !selected || $("sendBtn").disabled) return;
+  $("note").textContent = "sending…"; $("note").className = "";
+  try {
+    const res = await fetch(`/api/reply${qs({})}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: selected, text, permission_mode: $("mode").value }),
+    });
+    const out = await res.json();
+    if (res.ok) {
+      $("input").value = ""; $("input").style.height = "auto";
+      $("note").textContent = "sent — session resuming"; $("note").className = "ok";
+      $("chatInner").insertAdjacentHTML("beforeend", eventHtml({kind: "user", text}));
+      renderedCount += 1;
+      $("chat").scrollTop = $("chat").scrollHeight;
+    } else {
+      $("note").textContent = out.error || "failed"; $("note").className = "err";
+    }
+  } catch { $("note").textContent = "network error"; $("note").className = "err"; }
+}
+$("sendBtn").addEventListener("click", send);
+$("input").addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
+$("input").addEventListener("input", e => {
+  e.target.style.height = "auto";
+  e.target.style.height = Math.min(e.target.scrollHeight, 160) + "px";
+});
+
+if (location.hash.length > 1) select(location.hash.slice(1));
+refreshList();
+setInterval(refreshList, 3000);
+setInterval(refreshChat, 2500);
+</script>
+</body>
+</html>
